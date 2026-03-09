@@ -3,6 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import json
+import folium
+from streamlit_folium import st_folium
 
 # 1. Fungsi DMS (Darjah, Minit, Saat)
 def to_dms(deg):
@@ -31,10 +33,9 @@ def convert_to_geojson(df, luas):
     features = []
     coords = []
     
-    # 1. Bina Poligon (Geometri Utama)
     for _, row in df.iterrows():
         coords.append([float(row['E']), float(row['N'])])
-    coords.append([float(df.iloc[0]['E']), float(df.iloc[0]['N'])]) # Tutup poligon
+    coords.append([float(df.iloc[0]['E']), float(df.iloc[0]['N'])]) 
     
     poly_feature = {
         "type": "Feature",
@@ -50,21 +51,14 @@ def convert_to_geojson(df, luas):
     }
     features.append(poly_feature)
 
-    # 2. Bina Titik (Points) untuk setiap Stesen (Untuk Label STN di QGIS)
     for i, row in df.iterrows():
-        p1 = [row['E'], row['N']]
-        p2 = [df.iloc[(i + 1) % len(df)]['E'], df.iloc[(i + 1) % len(df)]['N']]
-        brg, dist, _ = kira_bearing_jarak(p1, p2)
-
         point_feature = {
             "type": "Feature",
             "properties": {
                 "Layer": "Stesen",
                 "STN": int(row['STN']),
                 "Easting": row['E'],
-                "Northing": row['N'],
-                "Bearing_Ke_Next": brg,
-                "Jarak_m": round(dist, 3)
+                "Northing": row['N']
             },
             "geometry": {
                 "type": "Point",
@@ -73,64 +67,95 @@ def convert_to_geojson(df, luas):
         }
         features.append(point_feature)
     
-    geojson_data = {
-        "type": "FeatureCollection",
-        "features": features
-    }
+    geojson_data = {"type": "FeatureCollection", "features": features}
     return json.dumps(geojson_data, indent=4)
 
 # --- Konfigurasi Halaman ---
-st.set_page_config(page_title="PUO Geomatik", layout="wide")
-
-# --- Sidebar ---
-st.sidebar.header("⚙️ Konfigurasi")
-uploaded_logo = st.sidebar.file_uploader("Muat naik Logo Organisasi", type=["png", "jpg", "jpeg"])
+st.set_page_config(page_title="PUO Geomatik Plotter", layout="wide")
 
 # --- Header ---
 col_logo, col_text = st.columns([1.5, 4], vertical_alignment="center") 
 with col_logo:
-    if uploaded_logo is not None:
-        st.image(uploaded_logo, width=250) 
-    else:
-        st.image("https://upload.wikimedia.org/wikipedia/ms/thumb/0/05/Logo_PUO.png/200px-Logo_PUO.png", width=250)
+    st.image("https://upload.wikimedia.org/wikipedia/ms/thumb/0/05/Logo_PUO.png/200px-Logo_PUO.png", width=200)
 with col_text:
-    st.markdown("<h3 style='margin:0;'>POLITEKNIK UNGKU OMAR</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='margin:0; font-size: 1.1rem;'>Jabatan Kejuruteraan Geomatik - Sistem Plot Poligon</p>", unsafe_allow_html=True)
+    st.markdown("<h2 style='margin:0;'>POLITEKNIK UNGKU OMAR</h2>", unsafe_allow_html=True)
+    st.markdown("<h4 style='margin:0;'>Jabatan Kejuruteraan Geomatik - Sistem Plotter & Google Satellite</h4>", unsafe_allow_html=True)
 
 st.divider()
 
-# --- Bahagian Muat Naik Fail ---
-uploaded_file = st.file_uploader("📂 Muat naik fail CSV (STN, E, N)", type=["csv"])
+# --- Sidebar ---
+st.sidebar.header("📂 Data Input")
+uploaded_file = st.sidebar.file_uploader("Muat naik fail CSV (STN, E, N)", type=["csv"])
 
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.subheader("📍 Jadual Koordinat Stesen")
-    st.dataframe(df.set_index('STN'), use_container_width=True)
+    luas_semasa = kira_luas(df['E'].values, df['N'].values)
 
-    if 'E' in df.columns and 'N' in df.columns:
-        if 'tampilkan_luas' not in st.session_state:
-            st.session_state.tampilkan_luas = False
+    # --- TAB NAVIGATION ---
+    tab1, tab2, tab3 = st.tabs(["🗺️ Peta Satelit (Google)", "📐 Pelan Teknikal", "📊 Data Jadual"])
 
-        luas_semasa = kira_luas(df['E'].values, df['N'].values)
-
-        # --- Sidebar Eksport QGIS ---
-        st.sidebar.subheader("🚀 Eksport ke QGIS")
-        geojson_output = convert_to_geojson(df, luas_semasa)
+    with tab3:
+        st.subheader("📍 Jadual Koordinat Stesen")
+        st.dataframe(df.set_index('STN'), use_container_width=True)
         
-        # Butang Muat Turun
-        st.sidebar.download_button(
-            label="🌍 MUAT TURUN FAIL QGIS (.geojson)",
+        # Download Button
+        geojson_output = convert_to_geojson(df, luas_semasa)
+        st.download_button(
+            label="🌍 Eksport ke QGIS (.geojson)",
             data=geojson_output,
             file_name="plot_puo_qgis.geojson",
-            mime="application/json",
-            help="Klik untuk muat turun fail yang boleh dibuka terus dalam QGIS.",
-            type="primary"
+            mime="application/json"
         )
-        st.sidebar.info("💡 Cara buka: Tarik fail yang dimuat turun terus ke dalam skrin QGIS anda.")
 
+    with tab1:
+        st.subheader("Peta Satelit Interaktif")
+        # Titik Tengah
+        center_n = df['N'].mean()
+        center_e = df['E'].mean()
+
+        # Bina Folium Map
+        m = folium.Map(location=[center_n, center_e], zoom_start=18, control_scale=True)
+
+        # Tambah Google Satellite Layer
+        folium.TileLayer(
+            tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+            attr='Google',
+            name='Google Satellite',
+            overlay=False,
+            control=True
+        ).add_to(m)
+
+        # Bina Poligon untuk Folium
+        folium_coords = [[row['N'], row['E']] for _, row in df.iterrows()]
+        
+        folium.Polygon(
+            locations=folium_coords,
+            color="cyan",
+            weight=3,
+            fill=True,
+            fill_opacity=0.2,
+            tooltip=f"Luas: {luas_semasa:.3f} m²"
+        ).add_to(m)
+
+        # Tambah Marker
+        for _, row in df.iterrows():
+            folium.CircleMarker(
+                location=[row['N'], row['E']],
+                radius=4,
+                color="yellow",
+                fill=True,
+                popup=f"STN: {int(row['STN'])}"
+            ).add_to(m)
+
+        # Papar Peta
+        st_folium(m, width="100%", height=600)
+
+    with tab2:
+        st.subheader("Pelan Plotting Geomatik")
+        
         # Plot Matplotlib
         fig, ax = plt.subplots(figsize=(10, 10)) 
-        ax.grid(True, linestyle='--', alpha=0.6, color='gray', zorder=0) 
+        ax.grid(True, linestyle='--', alpha=0.3) 
         
         points = df[['E', 'N']].values
         n_points = len(points)
@@ -139,45 +164,29 @@ if uploaded_file is not None:
         for i in range(n_points):
             p1, p2 = points[i], points[(i + 1) % n_points]
             ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='black', marker='o', 
-                    linewidth=3, markersize=8, markerfacecolor='white', zorder=4)
+                    linewidth=2, markersize=6, markerfacecolor='white', zorder=4)
             
             brg_str, dist, brg_val = kira_bearing_jarak(p1, p2)
             mid_x, mid_y = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
             
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            mag = np.sqrt(dx**2 + dy**2)
-            nx, ny = -dy/mag, dx/mag
-            offset_val = 0.4  
-
-            if ((mid_x + nx) - cx)**2 + ((mid_y + ny) - cy)**2 < (mid_x - cx)**2 + (mid_y - cy)**2:
-                nx, ny = -nx, -ny
-            
+            # Labeling logic
             rot = 90 - brg_val
             if rot < -90: rot += 180
             if rot > 90: rot -= 180
 
-            ax.text(mid_x + nx*offset_val, mid_y + ny*offset_val, brg_str, 
-                    color='red', fontsize=10, fontweight='bold', ha='center', va='center', rotation=rot, zorder=5)
-            ax.text(mid_x - nx*offset_val, mid_y - ny*offset_val, f"{dist:.3f}m", 
-                    color='blue', fontsize=9, fontweight='bold', ha='center', va='center', rotation=rot, zorder=5)
+            ax.text(mid_x, mid_y, f"{brg_str}\n{dist:.3f}m", 
+                    color='blue', fontsize=8, ha='center', va='center', rotation=rot)
 
+        # Label Nombor Stesen
         for i, row in df.iterrows():
-            vx, vy = row['E'] - cx, row['N'] - cy
-            dist_from_center = np.sqrt(vx**2 + vy**2)
-            offset_dist = 0.5 
-            ax.text(row['E'] + (vx/dist_from_center)*offset_dist, row['N'] + (vy/dist_from_center)*offset_dist, 
-                    f"{int(row['STN'])}", fontsize=11, fontweight='bold', ha='center', va='center', zorder=6,
-                    bbox=dict(facecolor='yellow', alpha=0.8, edgecolor='black', boxstyle='round,pad=0.15'))
-
-        if st.session_state.tampilkan_luas:
-            ax.text(cx, cy, f"LUAS\n{luas_semasa:.3f} m²", fontsize=16, color='darkgreen', fontweight='bold', 
-                    ha='center', va='center', zorder=7, bbox=dict(facecolor='white', alpha=0.8, edgecolor='darkgreen', boxstyle='round'))
-            ax.fill(df['E'], df['N'], alpha=0.1, color='green', zorder=1)
+            ax.text(row['E'], row['N'], f" {int(row['STN'])}", fontsize=10, fontweight='bold')
 
         ax.set_aspect('equal')
-        st.pyplot(fig, use_container_width=True)
+        ax.set_xlabel("Easting (E)")
+        ax.set_ylabel("Northing (N)")
+        st.pyplot(fig)
 
-        if st.button('📐 Kira & Papar Luas'):
-            st.session_state.tampilkan_luas = True
-            st.rerun()
-            
+        st.success(f"Luas Keseluruhan: **{luas_semasa:.3f} meter persegi**")
+
+else:
+    st.info("Sila muat naik fail CSV untuk memulakan pemetaan.")
