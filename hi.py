@@ -21,8 +21,8 @@ def load_users():
     if os.path.exists(USER_FILE):
         try:
             with open(USER_FILE, "r") as f: return json.load(f)
-        except: return {"ASYRAAF": "ADMIN1234"}
-    return {"ASYRAAF": "ADMIN1234"}
+        except: return {"adam": "123456"}
+    return {"adam": "123456"}
 
 if "user_db" not in st.session_state: st.session_state["user_db"] = load_users()
 if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
