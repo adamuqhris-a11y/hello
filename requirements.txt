@@ -1,6 +1,8 @@
 streamlit
 pandas
-matplotlib
 numpy
 folium
 streamlit-folium
+pyproj
+geopandas
+shapely
