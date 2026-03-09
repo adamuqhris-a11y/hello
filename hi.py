@@ -1,192 +1,149 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
-import json
 import folium
 from streamlit_folium import st_folium
+import math
+from pyproj import Transformer
+import geopandas as gpd
+from shapely.geometry import Polygon, Point
+import json
+import os
 
-# 1. Fungsi DMS (Darjah, Minit, Saat)
-def to_dms(deg):
-    d = int(deg)
-    m = int((deg - d) * 60)
-    s = round((((deg - d) * 60) - m) * 60, 0)
-    if s == 60: m += 1; s = 0
-    if m == 60: d += 1; m = 0
-    return f"{d}°{m:02d}'{s:02.0f}\""
+# 1. KONFIGURASI HALAMAN
+st.set_page_config(page_title="PUO Geomatics Pro", layout="wide")
 
-# 2. Fungsi Kira Bearing dan Jarak
-def kira_bearing_jarak(p1, p2):
-    de = p2[0] - p1[0]
-    dn = p2[1] - p1[1]
-    jarak = np.sqrt(de**2 + dn**2)
-    angle = np.degrees(np.arctan2(de, dn))
-    bearing = angle if angle >= 0 else angle + 360
-    return to_dms(bearing), jarak, bearing
+LOGO_URL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2bMV7v5yBzHn5g&riu=http%3a%2f%2f1.bp.blogspot.com%2f-wQXM8Oe-ImA%2fTXrQ7Npc7uI%2fAAAAAAAAE34%2f2ref_vtbT5k%2fs1600%2fPoliteknik%252BUngku%252BOmar.png&ehk=IjCxLkjx3O7Lb2LSgWsvprPJ5Dvm%2fAHQVB35yucEm6Q%3d&risl=&pid=ImgRaw&r=0"
 
-# 3. Fungsi Kira Luas (Metode Shoelace)
-def kira_luas(x, y):
-    return 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+# 2. SISTEM LOGIN
+USER_FILE = "users.json"
+def load_users():
+    if os.path.exists(USER_FILE):
+        try:
+            with open(USER_FILE, "r") as f: return json.load(f)
+        except: return {"ASYRAAF": "ADMIN1234"}
+    return {"ASYRAAF": "ADMIN1234"}
 
-# --- FUNGSI EKSPORT KE QGIS (GEOJSON) ---
-def convert_to_geojson(df, luas):
-    features = []
-    coords = []
-    
-    for _, row in df.iterrows():
-        coords.append([float(row['E']), float(row['N'])])
-    coords.append([float(df.iloc[0]['E']), float(df.iloc[0]['N'])]) 
-    
-    poly_feature = {
-        "type": "Feature",
-        "properties": {
-            "Layer": "Lot_Poligon",
-            "Luas_m2": round(luas, 3),
-            "Program": "PUO Geomatik Plotter"
-        },
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [coords]
-        }
-    }
-    features.append(poly_feature)
+if "user_db" not in st.session_state: st.session_state["user_db"] = load_users()
+if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
+if "current_user" not in st.session_state: st.session_state["current_user"] = ""
 
-    for i, row in df.iterrows():
-        point_feature = {
-            "type": "Feature",
-            "properties": {
-                "Layer": "Stesen",
-                "STN": int(row['STN']),
-                "Easting": row['E'],
-                "Northing": row['N']
-            },
-            "geometry": {
-                "type": "Point",
-                "coordinates": [float(row['E']), float(row['N'])]
-            }
-        }
-        features.append(point_feature)
-    
-    geojson_data = {"type": "FeatureCollection", "features": features}
-    return json.dumps(geojson_data, indent=4)
+def auth_interface():
+    _, col2, _ = st.columns([1, 1.8, 1])
+    with col2:
+        st.markdown(f"<div style='text-align: center;'><br><img src='{LOGO_URL}' width='80'><h2>Sistem Geomatik PUO</h2></div>", unsafe_allow_html=True)
+        with st.form("login_form"):
+            u_id = st.text_input("ID Pengguna")
+            u_pw = st.text_input("Kata Laluan", type="password")
+            if st.form_submit_button("Masuk", use_container_width=True):
+                if u_id in st.session_state["user_db"] and st.session_state["user_db"][u_id] == u_pw:
+                    st.session_state["logged_in"] = True
+                    st.session_state["current_user"] = u_id
+                    st.rerun()
+                else: st.error("ID atau Kata Laluan salah!")
 
-# --- Konfigurasi Halaman ---
-st.set_page_config(page_title="PUO Geomatik Plotter", layout="wide")
+if not st.session_state["logged_in"]: auth_interface(); st.stop()
 
-# --- Header ---
-col_logo, col_text = st.columns([1.5, 4], vertical_alignment="center") 
-with col_logo:
-    st.image("https://upload.wikimedia.org/wikipedia/ms/thumb/0/05/Logo_PUO.png/200px-Logo_PUO.png", width=200)
-with col_text:
-    st.markdown("<h2 style='margin:0;'>POLITEKNIK UNGKU OMAR</h2>", unsafe_allow_html=True)
-    st.markdown("<h4 style='margin:0;'>Jabatan Kejuruteraan Geomatik - Sistem Plotter & Google Satellite</h4>", unsafe_allow_html=True)
+# --- FUNGSI GEOMETRI ---
+@st.cache_resource
+def get_transformer(epsg):
+    try: return Transformer.from_crs(f"epsg:{epsg}", "epsg:4326", always_xy=True)
+    except: return None
 
-st.divider()
+def kira_data_garisan(p1, p2):
+    de, dn = p2['E'] - p1['E'], p2['N'] - p1['N']
+    dist = math.sqrt(de**2 + dn**2)
+    angle = math.degrees(math.atan2(de, dn))
+    if angle < 0: angle += 360
+    brg_str = f"{int(angle)}°{int((angle%1)*60):02d}'{int(((angle%1)*60%1)*60):02d}\""
+    rot_angle = angle - 90
+    if 90 < angle < 270: rot_angle += 180
+    return brg_str, round(dist, 3), rot_angle
 
-# --- Sidebar ---
-st.sidebar.header("📂 Data Input")
-uploaded_file = st.sidebar.file_uploader("Muat naik fail CSV (STN, E, N)", type=["csv"])
+# 3. SIDEBAR
+st.sidebar.markdown(f"**Sesi:** `{st.session_state['current_user']}`")
+if st.sidebar.button("🚪 Log Keluar"):
+    st.session_state["logged_in"] = False; st.rerun()
 
-if uploaded_file is not None:
+st.sidebar.divider()
+st.sidebar.subheader("🎯 Penentukuran (Offset)")
+off_n = st.sidebar.slider("Utara/Selatan (m)", -30.0, 30.0, 0.0)
+off_e = st.sidebar.slider("Timur/Barat (m)", -30.0, 30.0, 0.0)
+epsg_input = st.sidebar.text_input("Kod EPSG", value="4390")
+
+# 4. MAIN LOGIC
+uploaded_file = st.sidebar.file_uploader("Muat naik CSV", type=["csv"])
+
+if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    luas_semasa = kira_luas(df['E'].values, df['N'].values)
-
-    # --- TAB NAVIGATION ---
-    tab1, tab2, tab3 = st.tabs(["🗺️ Peta Satelit (Google)", "📐 Pelan Teknikal", "📊 Data Jadual"])
-
-    with tab3:
-        st.subheader("📍 Jadual Koordinat Stesen")
-        st.dataframe(df.set_index('STN'), use_container_width=True)
+    tf = get_transformer(epsg_input)
+    
+    if tf:
+        df_mod = df.copy()
+        df_mod['E_adj'], df_mod['N_adj'] = df_mod['E'] + off_e, df_mod['N'] + off_n
+        lons, lats = tf.transform(df_mod['E_adj'].values, df_mod['N_adj'].values)
+        df['lat'], df['lon'] = lats, lons
         
-        # Download Button
-        geojson_output = convert_to_geojson(df, luas_semasa)
-        st.download_button(
-            label="🌍 Eksport ke QGIS (.geojson)",
-            data=geojson_output,
-            file_name="plot_puo_qgis.geojson",
-            mime="application/json"
-        )
-
-    with tab1:
-        st.subheader("Peta Satelit Interaktif")
-        # Titik Tengah
-        center_n = df['N'].mean()
-        center_e = df['E'].mean()
-
-        # Bina Folium Map
-        m = folium.Map(location=[center_n, center_e], zoom_start=18, control_scale=True)
-
-        # Tambah Google Satellite Layer
-        folium.TileLayer(
-            tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
-            attr='Google',
-            name='Google Satellite',
-            overlay=False,
-            control=True
-        ).add_to(m)
-
-        # Bina Poligon untuk Folium
-        folium_coords = [[row['N'], row['E']] for _, row in df.iterrows()]
+        # PETA
+        m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=21, max_zoom=24)
+        folium.TileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", attr="Google", max_zoom=24).add_to(m)
         
-        folium.Polygon(
-            locations=folium_coords,
-            color="cyan",
-            weight=3,
-            fill=True,
-            fill_opacity=0.2,
-            tooltip=f"Luas: {luas_semasa:.3f} m²"
-        ).add_to(m)
+        # Info Lot Popup
+        area_m2 = Polygon(zip(df['E'], df['N'])).area
+        lot_html = f"<b>Info Lot</b><br>Luas: {area_m2:.3f} m²<br>Surveyor: {st.session_state['current_user']}"
+        folium.Polygon(df[['lat', 'lon']].values.tolist(), color="yellow", fill=True, fill_opacity=0.2, weight=3, popup=folium.Popup(lot_html, max_width=200)).add_to(m)
 
-        # Tambah Marker
-        for _, row in df.iterrows():
+        points_for_geojson = []
+        for i in range(len(df)):
+            p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
+            brg, dist, rot = kira_data_garisan(p1, p2)
+            
+            # POPUP SETIAP STESEN (Baru)
+            stn_popup_html = f"""
+            <div style="font-family: Arial; width: 160px;">
+                <b style="color:red;">📍 STESEN {int(p1['STN'])}</b><br><hr style="margin:5px 0;">
+                <b>E:</b> {p1['E']:.3f}<br>
+                <b>N:</b> {p1['N']:.3f}<br>
+                <b>Ke STN {int(p2['STN'])}:</b><br>
+                Bering: {brg}<br>
+                Jarak: {dist}m
+            </div>
+            """
+            
+            # Bulat Merah (CircleMarker)
             folium.CircleMarker(
-                location=[row['N'], row['E']],
-                radius=4,
-                color="yellow",
+                location=[p1['lat'], p1['lon']],
+                radius=6,
+                color="white",
+                weight=2,
                 fill=True,
-                popup=f"STN: {int(row['STN'])}"
+                fill_color="red",
+                fill_opacity=1,
+                popup=folium.Popup(stn_popup_html, max_width=200),
+                tooltip=f"Klik STN {int(p1['STN'])}"
             ).add_to(m)
-
-        # Papar Peta
-        st_folium(m, width="100%", height=600)
-
-    with tab2:
-        st.subheader("Pelan Plotting Geomatik")
-        
-        # Plot Matplotlib
-        fig, ax = plt.subplots(figsize=(10, 10)) 
-        ax.grid(True, linestyle='--', alpha=0.3) 
-        
-        points = df[['E', 'N']].values
-        n_points = len(points)
-        cx, cy = np.mean(df['E']), np.mean(df['N'])
-
-        for i in range(n_points):
-            p1, p2 = points[i], points[(i + 1) % n_points]
-            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='black', marker='o', 
-                    linewidth=2, markersize=6, markerfacecolor='white', zorder=4)
             
-            brg_str, dist, brg_val = kira_bearing_jarak(p1, p2)
-            mid_x, mid_y = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
-            
-            # Labeling logic
-            rot = 90 - brg_val
-            if rot < -90: rot += 180
-            if rot > 90: rot -= 180
+            # Label Bering/Jarak Selari
+            mid_lat, mid_lon = (p1['lat']+p2['lat'])/2, (p1['lon']+p2['lon'])/2
+            html_label = f"""<div style="transform: rotate({rot}deg); white-space: nowrap; font-size: 8pt; color: #00FF00; font-weight: bold; text-shadow: 1px 1px 2px black; text-align: center; width: 100px; margin-left: -50px;">{brg}<br>{dist}m</div>"""
+            folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=html_label)).add_to(m)
 
-            ax.text(mid_x, mid_y, f"{brg_str}\n{dist:.3f}m", 
-                    color='blue', fontsize=8, ha='center', va='center', rotation=rot)
+            # Simpan data untuk GeoJSON
+            points_for_geojson.append({
+                'geometry': Point(p1['lon'], p1['lat']),
+                'STN': str(p1['STN']),
+                'E_Asal': p1['E'], 'N_Asal': p1['N'],
+                'Bering_Next': brg, 'Jarak_Next': dist
+            })
 
-        # Label Nombor Stesen
-        for i, row in df.iterrows():
-            ax.text(row['E'], row['N'], f" {int(row['STN'])}", fontsize=10, fontweight='bold')
+        # EKSPORT GEOJSON
+        gdf_pts = gpd.GeoDataFrame(points_for_geojson, crs="EPSG:4326")
+        poly_geom = Polygon(zip(df['lon'], df['lat']))
+        gdf_poly = gpd.GeoDataFrame({'STN': ['LOT_UTAMA'], 'Luas_m2': [round(area_m2,3)]}, geometry=[poly_geom], crs="EPSG:4326")
+        geojson_out = pd.concat([gdf_poly, gdf_pts], ignore_index=True).to_json()
+        st.sidebar.download_button("💾 Muat Turun GeoJSON", data=geojson_out, file_name="lot_lengkap.geojson")
 
-        ax.set_aspect('equal')
-        ax.set_xlabel("Easting (E)")
-        ax.set_ylabel("Northing (N)")
-        st.pyplot(fig)
-
-        st.success(f"Luas Keseluruhan: **{luas_semasa:.3f} meter persegi**")
-
-else:
-    st.info("Sila muat naik fail CSV untuk memulakan pemetaan.")
+        st_folium(m, width="100%", height=600, returned_objects=[])
+        st.metric("Luas (m²)", f"{area_m2:.3f}")
+    else: st.error("EPSG Error")
+else: st.info("Sila muat naik CSV.")
