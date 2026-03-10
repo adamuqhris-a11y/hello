@@ -17,9 +17,12 @@ LOGO_URL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2
 
 # 2. SISTEM LOGIN (3 USER SAHAJA)
 def load_users():
+    # Menggunakan session_state untuk menyimpan password supaya perubahan bersifat segera dalam sesi ini
+    if "custom_pw" not in st.session_state:
+        st.session_state["custom_pw"] = "123456"
+        
     senarai_id = ["adam", "aina", "abu"]
-    PASSWORD_SERAGAM = "123456" 
-    return {user: PASSWORD_SERAGAM for user in senarai_id}
+    return {user: st.session_state["custom_pw"] for user in senarai_id}
 
 if "user_db" not in st.session_state: 
     st.session_state["user_db"] = load_users()
@@ -32,12 +35,16 @@ def auth_interface():
     _, col2, _ = st.columns([1, 1.8, 1])
     with col2:
         st.markdown(f"<div style='text-align: center;'><br><img src='{LOGO_URL}' width='80'><h2>Sistem Geomatik PUO</h2></div>", unsafe_allow_html=True)
+        
+        # Borang Log Masuk
         with st.form("login_form"):
             u_id = st.text_input("ID Pengguna")
             u_pw = st.text_input("Kata Laluan", type="password")
             submit = st.form_submit_button("Masuk", use_container_width=True)
             
             if submit:
+                # Refresh user_db untuk pastikan password terkini diambil
+                st.session_state["user_db"] = load_users()
                 if u_id in st.session_state["user_db"] and st.session_state["user_db"][u_id] == u_pw:
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = u_id
@@ -45,9 +52,20 @@ def auth_interface():
                 else: 
                     st.error("ID atau Kata Laluan salah!")
         
-        # Tambahan Butang Lupa Kata Laluan di luar form supaya tidak mengganggu proses submit
-        if st.button("Lupa Kata Laluan?", use_container_width=True):
-            st.info("Sila hubungi Pentadbir Sistem (Admin) untuk penetapan semula kata laluan anda.")
+        # Bahagian Tukar Kata Laluan Terus
+        with st.expander("Tukar Kata Laluan Baru"):
+            with st.form("change_pw_form"):
+                new_pw = st.text_input("Masukkan Kata Laluan Baru", type="password")
+                confirm_pw = st.text_input("Sahkan Kata Laluan Baru", type="password")
+                change_btn = st.form_submit_button("Kemaskini Kata Laluan")
+                
+                if change_btn:
+                    if new_pw == confirm_pw and new_pw != "":
+                        st.session_state["custom_pw"] = new_pw
+                        st.success(f"Kata laluan telah ditukar kepada: {new_pw}")
+                        st.info("Sila log masuk menggunakan kata laluan baru anda.")
+                    else:
+                        st.error("Kata laluan tidak sepadan atau kosong!")
 
 if not st.session_state["logged_in"]: 
     auth_interface()
