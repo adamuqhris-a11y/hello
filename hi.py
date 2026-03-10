@@ -13,10 +13,9 @@ import os
 # 1. KONFIGURASI HALAMAN
 st.set_page_config(page_title="PUO Geomatics Pro", layout="wide")
 
-# URL Logo Rasmi PUO
-LOGO_URL = "https://i.ibb.co/LzXpYyM/politeknik-ungku-omar-seeklogo-removebg-preview-png.png" 
+LOGO_URL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2bMV7v5yBzHn5g&riu=http%3a%2f%2f1.bp.blogspot.com%2f-wQXM8Oe-ImA%2fTXrQ7Npc7uI%2fAAAAAAAAE34%2f2ref_vtbT5k%2fs1600%2fPoliteknik%252BUngku%252BOmar.png&ehk=IjCxLkjx3O7Lb2LSgWsvprPJ5Dvm%2fAHQVB35yucEm6Q%3d&risl=&pid=ImgRaw&r=0"
 
-# 2. SISTEM LOGIN
+# 2. SISTEM LOGIN (KEKAL KATA LALUAN DALAM FAIL)
 def get_stored_password():
     file_path = "password.txt"
     if not os.path.exists(file_path):
@@ -45,8 +44,160 @@ if "current_user" not in st.session_state:
 def auth_interface():
     _, col2, _ = st.columns([1, 1.8, 1])
     with col2:
-        st.markdown(f"<div style='text-align: center;'><br><img src='{LOGO_URL}' width='250'><h2>Sistem Geomatik PUO</h2></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'><br><img src='{LOGO_URL}' width='80'><h2>Sistem Geomatik PUO</h2></div>", unsafe_allow_html=True)
         with st.form("login_form"):
             u_id = st.text_input("ID Pengguna")
             u_pw = st.text_input("Kata Laluan", type="password")
-            submit = st.form_submit_button
+            submit = st.form_submit_button("Masuk", use_container_width=True)
+            if submit:
+                st.session_state["user_db"] = load_users()
+                if u_id in st.session_state["user_db"] and st.session_state["user_db"][u_id] == u_pw:
+                    st.session_state["logged_in"] = True
+                    st.session_state["current_user"] = u_id
+                    st.rerun()
+                else: 
+                    st.error("ID atau Kata Laluan salah!")
+        with st.expander("Tukar Kata Laluan Baru"):
+            with st.form("change_pw_form"):
+                new_pw = st.text_input("Masukkan Kata Laluan Baru", type="password")
+                confirm_pw = st.text_input("Sahkan Kata Laluan Baru", type="password")
+                change_btn = st.form_submit_button("Kemaskini Kata Laluan")
+                if change_btn:
+                    if new_pw == confirm_pw and new_pw != "":
+                        save_password(new_pw)
+                        st.session_state["user_db"] = load_users()
+                        st.success(f"Kata laluan telah disimpan secara kekal!")
+                        st.info("Sila log masuk menggunakan kata laluan baru anda.")
+                    else:
+                        st.error("Kata laluan tidak sepadan atau kosong!")
+
+if not st.session_state["logged_in"]: 
+    auth_interface()
+    st.stop()
+
+# --- FUNGSI GEOMETRI ---
+@st.cache_resource
+def get_transformer(epsg):
+    try: return Transformer.from_crs(f"epsg:{epsg}", "epsg:4326", always_xy=True)
+    except: return None
+
+def kira_data_garisan(p1, p2):
+    de, dn = p2['E'] - p1['E'], p2['N'] - p1['N']
+    dist = math.sqrt(de**2 + dn**2)
+    angle = math.degrees(math.atan2(de, dn))
+    if angle < 0: angle += 360
+    brg_str = f"{int(angle)}°{int((angle%1)*60):02d}'{int(((angle%1)*60%1)*60):02d}\""
+    rot_angle = angle - 90
+    if 90 < angle < 270: rot_angle += 180
+    return brg_str, round(dist, 3), rot_angle
+
+# 3. SIDEBAR
+st.sidebar.markdown(f"**Sesi:** `{st.session_state['current_user']}`")
+if st.sidebar.button("🚪 Log Keluar"):
+    st.session_state["logged_in"] = False
+    st.rerun()
+
+st.sidebar.divider()
+st.sidebar.subheader("⚙️ Tetapan Paparan Peta")
+# Kawalan On/Off dalam Sidebar
+show_sat = st.sidebar.checkbox("Paparkan Imej Satelit", value=True)
+show_stn = st.sidebar.checkbox("Paparkan Label Stesen", value=True)
+show_data = st.sidebar.checkbox("Paparkan Bering & Jarak", value=True)
+
+st.sidebar.divider()
+st.sidebar.subheader("🎯 Penentukuran (Offset)")
+off_n = st.sidebar.slider("Utara/Selatan (m)", -30.0, 30.0, 0.0)
+off_e = st.sidebar.slider("Timur/Barat (m)", -30.0, 30.0, 0.0)
+epsg_input = st.sidebar.text_input("Kod EPSG", value="4390")
+
+# 4. MAIN LOGIC
+uploaded_file = st.sidebar.file_uploader("Muat naik CSV", type=["csv"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    tf = get_transformer(epsg_input)
+    
+    if tf:
+        df_mod = df.copy()
+        df_mod['E_adj'], df_mod['N_adj'] = df_mod['E'] + off_e, df_mod['N'] + off_n
+        lons, lats = tf.transform(df_mod['E_adj'].values, df_mod['N_adj'].values)
+        df['lat'], df['lon'] = lats, lons
+        
+        # PETA
+        m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=21, max_zoom=24, control_scale=True)
+        
+        # 1. Lapisan Satelit
+        if show_sat:
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", 
+                attr="Google Satellite", 
+                max_zoom=24,
+                name="Satelit"
+            ).add_to(m)
+        else:
+            folium.TileLayer(name="Standard").add_to(m)
+
+        # Info Lot Popup
+        area_m2 = Polygon(zip(df['E'], df['N'])).area
+        lot_html = f"<b>Info Lot</b><br>Luas: {area_m2:.3f} m²<br>Surveyor: {st.session_state['current_user']}"
+        
+        # PEMBETULAN DI SINI: Menutup kurungan Popup dan Polygon dengan betul
+        folium.Polygon(
+            df[['lat', 'lon']].values.tolist(), 
+            color="yellow", 
+            fill=True, 
+            fill_opacity=0.2, 
+            weight=3, 
+            popup=folium.Popup(lot_html, max_width=200)
+        ).add_to(m)
+
+        points_for_geojson = []
+        for i in range(len(df)):
+            p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
+            brg, dist, rot = kira_data_garisan(p1, p2)
+            
+            # 2. Lapisan Stesen
+            if show_stn:
+                stn_popup_html = f"""
+                <div style="font-family: Arial; width: 160px;">
+                    <b style="color:red;">📍 STESEN {int(p1['STN'])}</b><br><hr style="margin:5px 0;">
+                    <b>E:</b> {p1['E']:.3f}<br>
+                    <b>N:</b> {p1['N']:.3f}<br>
+                    <b>Ke STN {int(p2['STN'])}:</b><br>
+                    Bering: {brg}<br>
+                    Jarak: {dist}m
+                </div>
+                """
+                folium.CircleMarker(
+                    location=[p1['lat'], p1['lon']],
+                    radius=6, color="white", weight=2, fill=True, fill_color="red", fill_opacity=1,
+                    popup=folium.Popup(stn_popup_html, max_width=200),
+                    tooltip=f"STN {int(p1['STN'])}"
+                ).add_to(m)
+            
+            # 3. Lapisan Bering & Jarak
+            if show_data:
+                mid_lat, mid_lon = (p1['lat']+p2['lat'])/2, (p1['lon']+p2['lon'])/2
+                html_label = f"""<div style="transform: rotate({rot}deg); white-space: nowrap; font-size: 8pt; color: #00FF00; font-weight: bold; text-shadow: 1px 1px 2px black; text-align: center; width: 100px; margin-left: -50px;">{brg}<br>{dist}m</div>"""
+                folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=html_label)).add_to(m)
+
+            points_for_geojson.append({
+                'geometry': Point(p1['lon'], p1['lat']),
+                'STN': str(p1['STN']),
+                'E_Asal': p1['E'], 'N_Asal': p1['N'],
+                'Bering_Next': brg, 'Jarak_Next': dist
+            })
+
+        # EKSPORT GEOJSON
+        gdf_pts = gpd.GeoDataFrame(points_for_geojson, crs="EPSG:4326")
+        poly_geom = Polygon(zip(df['lon'], df['lat']))
+        gdf_poly = gpd.GeoDataFrame({'STN': ['LOT_UTAMA'], 'Luas_m2': [round(area_m2,3)]}, geometry=[poly_geom], crs="EPSG:4326")
+        geojson_out = pd.concat([gdf_poly, gdf_pts], ignore_index=True).to_json()
+        st.sidebar.download_button("💾 Muat Turun GeoJSON", data=geojson_out, file_name="lot_lengkap.geojson")
+
+        st_folium(m, width="100%", height=600, returned_objects=[])
+        st.metric("Luas (m²)", f"{area_m2:.3f}")
+    else: 
+        st.error("EPSG Error")
+else: 
+    st.info("Sila muat naik CSV.")
