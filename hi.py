@@ -13,10 +13,10 @@ import os
 # 1. KONFIGURASI HALAMAN
 st.set_page_config(page_title="PUO Geomatics Pro", layout="wide")
 
-# Link logo asal (Backup)
+# Logo asal (Fallback jika fail tempatan tiada)
 LOGO_URL_KECIL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2bMV7v5yBzHn5g&riu=http%3a%2f%2f1.bp.blogspot.com%2f-wQXM8Oe-ImA%2fTXrQ7Npc7uI%2fAAAAAAAAE34%2f2ref_vtbT5k%2fs1600%2fPoliteknik%252BUngku%252BOmar.png&ehk=IjCxLkjx3O7Lb2LSgWsvprPJ5Dvm%2fAHQVB35yucEm6Q%3d&risl=&pid=ImgRaw&r=0"
 
-# 2. SISTEM LOGIN (KEKAL KATA LALUAN DALAM FAIL)
+# 2. SISTEM LOGIN
 def get_stored_password():
     file_path = "password.txt"
     if not os.path.exists(file_path):
@@ -45,7 +45,7 @@ if "current_user" not in st.session_state:
 def auth_interface():
     _, col2, _ = st.columns([1, 2, 1])
     with col2:
-        # Memaparkan Logo yang anda hantar
+        # Menampilkan Logo PUO yang anda muat naik
         try:
             st.image("politeknik-ungku-umar-seeklogo-removebg-preview.png.png", use_container_width=True)
         except:
@@ -75,10 +75,9 @@ def auth_interface():
                     if new_pw == confirm_pw and new_pw != "":
                         save_password(new_pw)
                         st.session_state["user_db"] = load_users()
-                        st.success(f"Kata laluan telah disimpan secara kekal!")
-                        st.info("Sila log masuk menggunakan kata laluan baru anda.")
+                        st.success("Kata laluan telah disimpan secara kekal!")
                     else:
-                        st.error("Kata laluan tidak sepadan atau kosong!")
+                        st.error("Kata laluan tidak sepadan!")
 
 if not st.session_state["logged_in"]: 
     auth_interface()
@@ -95,4 +94,75 @@ def get_transformer(epsg):
 def kira_data_garisan(p1, p2):
     de, dn = p2['E'] - p1['E'], p2['N'] - p1['N']
     dist = math.sqrt(de**2 + dn**2)
-    angle =
+    # PEMBETULAN SINTAKS DI SINI
+    angle = math.degrees(math.atan2(de, dn))
+    if angle < 0: angle += 360
+    brg_str = f"{int(angle)}°{int((angle%1)*60):02d}'{int(((angle%1)*60%1)*60):02d}\""
+    rot_angle = angle - 90
+    if 90 < angle < 270: rot_angle += 180
+    return brg_str, round(dist, 3), rot_angle
+
+# 3. SIDEBAR
+st.sidebar.markdown(f"**Sesi:** `{st.session_state['current_user']}`")
+if st.sidebar.button("🚪 Log Keluar"):
+    st.session_state["logged_in"] = False
+    st.rerun()
+
+st.sidebar.divider()
+st.sidebar.subheader("⚙️ Tetapan Paparan Peta")
+show_sat = st.sidebar.checkbox("Paparkan Imej Satelit", value=True)
+show_stn = st.sidebar.checkbox("Paparkan Label Stesen", value=True)
+show_data = st.sidebar.checkbox("Paparkan Bering & Jarak", value=True)
+show_poly = st.sidebar.checkbox("Paparkan Poligon Lot", value=True)
+
+st.sidebar.divider()
+st.sidebar.subheader("🎯 Penentukuran (Offset)")
+off_n = st.sidebar.slider("Utara/Selatan (m)", -30.0, 30.0, 0.0)
+off_e = st.sidebar.slider("Timur/Barat (m)", -30.0, 30.0, 0.0)
+epsg_input = st.sidebar.text_input("Kod EPSG", value="4390")
+
+# 4. MAIN LOGIC
+st.markdown(f"""
+    <div style="display: flex; align-items: center; margin-bottom: 20px;">
+        <img src='{LOGO_URL_KECIL}' width='50' style='margin-right:15px;'>
+        <h1 style='margin:0;'>SISTEM GEOMATIK PUO PRO</h1>
+    </div>
+    <hr style='margin-top:0;'>
+""", unsafe_allow_html=True)
+
+uploaded_file = st.sidebar.file_uploader("Muat naik CSV", type=["csv"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    tf = get_transformer(epsg_input)
+    
+    if tf:
+        df_mod = df.copy()
+        df_mod['E_adj'], df_mod['N_adj'] = df_mod['E'] + off_e, df_mod['N'] + off_n
+        lons, lats = tf.transform(df_mod['E_adj'].values, df_mod['N_adj'].values)
+        df['lat'], df['lon'] = lats, lons
+        
+        m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=20, max_zoom=24, control_scale=True)
+        
+        if show_sat:
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", 
+                attr="Google Satellite", max_zoom=24, name="Satelit"
+            ).add_to(m)
+        else:
+            folium.TileLayer(name="Standard").add_to(m)
+
+        area_m2 = Polygon(zip(df['E'], df['N'])).area
+        lot_html = f"<b>Info Lot</b><br>Luas: {area_m2:.3f} m²<br>Surveyor: {st.session_state['current_user']}"
+        
+        if show_poly:
+            folium.Polygon(
+                df[['lat', 'lon']].values.tolist(), 
+                color="yellow", fill=True, fill_opacity=0.2, weight=3, 
+                popup=folium.Popup(lot_html, max_width=200)
+            ).add_to(m)
+
+        points_for_geojson = []
+        for i in range(len(df)):
+            p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
+            brg, dist, rot = kira_data
