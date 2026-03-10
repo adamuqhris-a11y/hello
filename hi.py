@@ -35,13 +35,19 @@ def auth_interface():
         with st.form("login_form"):
             u_id = st.text_input("ID Pengguna")
             u_pw = st.text_input("Kata Laluan", type="password")
-            if st.form_submit_button("Masuk", use_container_width=True):
+            submit = st.form_submit_button("Masuk", use_container_width=True)
+            
+            if submit:
                 if u_id in st.session_state["user_db"] and st.session_state["user_db"][u_id] == u_pw:
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = u_id
                     st.rerun()
                 else: 
                     st.error("ID atau Kata Laluan salah!")
+        
+        # Tambahan Butang Lupa Kata Laluan di luar form supaya tidak mengganggu proses submit
+        if st.button("Lupa Kata Laluan?", use_container_width=True):
+            st.info("Sila hubungi Pentadbir Sistem (Admin) untuk penetapan semula kata laluan anda.")
 
 if not st.session_state["logged_in"]: 
     auth_interface()
