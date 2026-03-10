@@ -14,7 +14,7 @@ import os
 st.set_page_config(page_title="PUO Geomatics Pro", layout="wide")
 
 # URL Logo (Gunakan URL baru atau path fail yang anda muat naik)
-LOGO_URL = "https://i.ibb.co/LzXpYyM/politeknik-ungku-omar-seeklogo-removebg-preview-png.png" 
+LOGO_URL = "https://i.ibb.co/LzXpYyM/politeknik-ungku-omar-seeklogo-removebg-preview-png" 
 
 # 2. SISTEM LOGIN
 def get_stored_password():
@@ -68,3 +68,4 @@ def auth_interface():
                         save_password(new_pw)
                         st.session_state["user_db"] = load_users()
                         st.success(f
+
