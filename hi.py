@@ -18,12 +18,10 @@ LOGO_URL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2
 # 2. SISTEM LOGIN (KEKAL KATA LALUAN DALAM FAIL)
 def get_stored_password():
     file_path = "password.txt"
-    # Jika fail tidak wujud, cipta fail dengan password asal
     if not os.path.exists(file_path):
         with open(file_path, "w") as f:
             f.write("123456")
         return "123456"
-    # Baca password dari fail
     with open(file_path, "r") as f:
         return f.read().strip()
 
@@ -47,15 +45,11 @@ def auth_interface():
     _, col2, _ = st.columns([1, 1.8, 1])
     with col2:
         st.markdown(f"<div style='text-align: center;'><br><img src='{LOGO_URL}' width='80'><h2>Sistem Geomatik PUO</h2></div>", unsafe_allow_html=True)
-        
-        # Borang Log Masuk
         with st.form("login_form"):
             u_id = st.text_input("ID Pengguna")
             u_pw = st.text_input("Kata Laluan", type="password")
             submit = st.form_submit_button("Masuk", use_container_width=True)
-            
             if submit:
-                # Sentiasa ambil password terkini dari fail
                 st.session_state["user_db"] = load_users()
                 if u_id in st.session_state["user_db"] and st.session_state["user_db"][u_id] == u_pw:
                     st.session_state["logged_in"] = True
@@ -63,18 +57,15 @@ def auth_interface():
                     st.rerun()
                 else: 
                     st.error("ID atau Kata Laluan salah!")
-        
-        # Bahagian Tukar Kata Laluan Terus
         with st.expander("Tukar Kata Laluan Baru"):
             with st.form("change_pw_form"):
                 new_pw = st.text_input("Masukkan Kata Laluan Baru", type="password")
                 confirm_pw = st.text_input("Sahkan Kata Laluan Baru", type="password")
                 change_btn = st.form_submit_button("Kemaskini Kata Laluan")
-                
                 if change_btn:
                     if new_pw == confirm_pw and new_pw != "":
-                        save_password(new_pw) # Simpan ke fail secara kekal
-                        st.session_state["user_db"] = load_users() # Update sesi
+                        save_password(new_pw)
+                        st.session_state["user_db"] = load_users()
                         st.success(f"Kata laluan telah disimpan secara kekal!")
                         st.info("Sila log masuk menggunakan kata laluan baru anda.")
                     else:
@@ -126,8 +117,20 @@ if uploaded_file:
         df['lat'], df['lon'] = lats, lons
         
         # PETA
-        m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=21, max_zoom=24)
-        folium.TileLayer("https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", attr="Google", max_zoom=24).add_to(m)
+        m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=21, max_zoom=24, control_scale=True)
+        
+        # Kumpulan Lapisan (Feature Groups)
+        fg_satellite = folium.FeatureGroup(name="Imej Satelit (Google)", show=True).add_to(m)
+        fg_stesen = folium.FeatureGroup(name="Label & Penanda Stesen", show=True).add_to(m)
+        fg_data = folium.FeatureGroup(name="Bering & Jarak", show=True).add_to(m)
+
+        # Tambah Imej Satelit ke kumpulan
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", 
+            attr="Google Satellite", 
+            max_zoom=24,
+            name="Google Satellite"
+        ).add_to(fg_satellite)
         
         # Info Lot Popup
         area_m2 = Polygon(zip(df['E'], df['N'])).area
@@ -139,7 +142,6 @@ if uploaded_file:
             p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
             brg, dist, rot = kira_data_garisan(p1, p2)
             
-            # POPUP SETIAP STESEN
             stn_popup_html = f"""
             <div style="font-family: Arial; width: 160px;">
                 <b style="color:red;">📍 STESEN {int(p1['STN'])}</b><br><hr style="margin:5px 0;">
@@ -151,7 +153,7 @@ if uploaded_file:
             </div>
             """
             
-            # Bulat Merah (CircleMarker)
+            # Bulat Merah (CircleMarker) - Dimasukkan ke fg_stesen
             folium.CircleMarker(
                 location=[p1['lat'], p1['lon']],
                 radius=6,
@@ -161,21 +163,23 @@ if uploaded_file:
                 fill_color="red",
                 fill_opacity=1,
                 popup=folium.Popup(stn_popup_html, max_width=200),
-                tooltip=f"Klik STN {int(p1['STN'])}"
-            ).add_to(m)
+                tooltip=f"STN {int(p1['STN'])}"
+            ).add_to(fg_stesen)
             
-            # Label Bering/Jarak Selari
+            # Label Bering/Jarak Selari - Dimasukkan ke fg_data
             mid_lat, mid_lon = (p1['lat']+p2['lat'])/2, (p1['lon']+p2['lon'])/2
             html_label = f"""<div style="transform: rotate({rot}deg); white-space: nowrap; font-size: 8pt; color: #00FF00; font-weight: bold; text-shadow: 1px 1px 2px black; text-align: center; width: 100px; margin-left: -50px;">{brg}<br>{dist}m</div>"""
-            folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=html_label)).add_to(m)
+            folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=html_label)).add_to(fg_data)
 
-            # Simpan data untuk GeoJSON
             points_for_geojson.append({
                 'geometry': Point(p1['lon'], p1['lat']),
                 'STN': str(p1['STN']),
                 'E_Asal': p1['E'], 'N_Asal': p1['N'],
                 'Bering_Next': brg, 'Jarak_Next': dist
             })
+
+        # Kawalan Lapisan (Layer Control)
+        folium.LayerControl(collapsed=False).add_to(m)
 
         # EKSPORT GEOJSON
         gdf_pts = gpd.GeoDataFrame(points_for_geojson, crs="EPSG:4326")
