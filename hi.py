@@ -98,6 +98,13 @@ if st.sidebar.button("🚪 Log Keluar"):
     st.rerun()
 
 st.sidebar.divider()
+st.sidebar.subheader("⚙️ Tetapan Paparan Peta")
+# Kawalan On/Off dalam Sidebar
+show_sat = st.sidebar.checkbox("Paparkan Imej Satelit", value=True)
+show_stn = st.sidebar.checkbox("Paparkan Label Stesen", value=True)
+show_data = st.sidebar.checkbox("Paparkan Bering & Jarak", value=True)
+
+st.sidebar.divider()
 st.sidebar.subheader("🎯 Penentukuran (Offset)")
 off_n = st.sidebar.slider("Utara/Selatan (m)", -30.0, 30.0, 0.0)
 off_e = st.sidebar.slider("Timur/Barat (m)", -30.0, 30.0, 0.0)
@@ -119,78 +126,18 @@ if uploaded_file:
         # PETA
         m = folium.Map(location=[df['lat'].mean(), df['lon'].mean()], zoom_start=21, max_zoom=24, control_scale=True)
         
-        # Kumpulan Lapisan (Feature Groups)
-        fg_satellite = folium.FeatureGroup(name="Imej Satelit (Google)", show=True).add_to(m)
-        fg_stesen = folium.FeatureGroup(name="Label & Penanda Stesen", show=True).add_to(m)
-        fg_data = folium.FeatureGroup(name="Bering & Jarak", show=True).add_to(m)
+        # 1. Lapisan Satelit
+        if show_sat:
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", 
+                attr="Google Satellite", 
+                max_zoom=24,
+                name="Satelit"
+            ).add_to(m)
+        else:
+            folium.TileLayer(name="Standard").add_to(m)
 
-        # Tambah Imej Satelit ke kumpulan
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", 
-            attr="Google Satellite", 
-            max_zoom=24,
-            name="Google Satellite"
-        ).add_to(fg_satellite)
-        
         # Info Lot Popup
         area_m2 = Polygon(zip(df['E'], df['N'])).area
         lot_html = f"<b>Info Lot</b><br>Luas: {area_m2:.3f} m²<br>Surveyor: {st.session_state['current_user']}"
-        folium.Polygon(df[['lat', 'lon']].values.tolist(), color="yellow", fill=True, fill_opacity=0.2, weight=3, popup=folium.Popup(lot_html, max_width=200)).add_to(m)
-
-        points_for_geojson = []
-        for i in range(len(df)):
-            p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
-            brg, dist, rot = kira_data_garisan(p1, p2)
-            
-            stn_popup_html = f"""
-            <div style="font-family: Arial; width: 160px;">
-                <b style="color:red;">📍 STESEN {int(p1['STN'])}</b><br><hr style="margin:5px 0;">
-                <b>E:</b> {p1['E']:.3f}<br>
-                <b>N:</b> {p1['N']:.3f}<br>
-                <b>Ke STN {int(p2['STN'])}:</b><br>
-                Bering: {brg}<br>
-                Jarak: {dist}m
-            </div>
-            """
-            
-            # Bulat Merah (CircleMarker) - Dimasukkan ke fg_stesen
-            folium.CircleMarker(
-                location=[p1['lat'], p1['lon']],
-                radius=6,
-                color="white",
-                weight=2,
-                fill=True,
-                fill_color="red",
-                fill_opacity=1,
-                popup=folium.Popup(stn_popup_html, max_width=200),
-                tooltip=f"STN {int(p1['STN'])}"
-            ).add_to(fg_stesen)
-            
-            # Label Bering/Jarak Selari - Dimasukkan ke fg_data
-            mid_lat, mid_lon = (p1['lat']+p2['lat'])/2, (p1['lon']+p2['lon'])/2
-            html_label = f"""<div style="transform: rotate({rot}deg); white-space: nowrap; font-size: 8pt; color: #00FF00; font-weight: bold; text-shadow: 1px 1px 2px black; text-align: center; width: 100px; margin-left: -50px;">{brg}<br>{dist}m</div>"""
-            folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=html_label)).add_to(fg_data)
-
-            points_for_geojson.append({
-                'geometry': Point(p1['lon'], p1['lat']),
-                'STN': str(p1['STN']),
-                'E_Asal': p1['E'], 'N_Asal': p1['N'],
-                'Bering_Next': brg, 'Jarak_Next': dist
-            })
-
-        # Kawalan Lapisan (Layer Control)
-        folium.LayerControl(collapsed=False).add_to(m)
-
-        # EKSPORT GEOJSON
-        gdf_pts = gpd.GeoDataFrame(points_for_geojson, crs="EPSG:4326")
-        poly_geom = Polygon(zip(df['lon'], df['lat']))
-        gdf_poly = gpd.GeoDataFrame({'STN': ['LOT_UTAMA'], 'Luas_m2': [round(area_m2,3)]}, geometry=[poly_geom], crs="EPSG:4326")
-        geojson_out = pd.concat([gdf_poly, gdf_pts], ignore_index=True).to_json()
-        st.sidebar.download_button("💾 Muat Turun GeoJSON", data=geojson_out, file_name="lot_lengkap.geojson")
-
-        st_folium(m, width="100%", height=600, returned_objects=[])
-        st.metric("Luas (m²)", f"{area_m2:.3f}")
-    else: 
-        st.error("EPSG Error")
-else: 
-    st.info("Sila muat naik CSV.")
+        folium.Polygon(df[['lat', 'lon']].values.tolist(), color="yellow", fill=True, fill_opacity=0.2, weight=3, popup=folium.Popup(lot_html
