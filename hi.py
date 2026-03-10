@@ -15,18 +15,22 @@ st.set_page_config(page_title="PUO Geomatics Pro", layout="wide")
 
 LOGO_URL = "https://th.bing.com/th/id/R.7845becf994d6c6a0b2afe8147ecbbf4?rik=l%2bMV7v5yBzHn5g&riu=http%3a%2f%2f1.bp.blogspot.com%2f-wQXM8Oe-ImA%2fTXrQ7Npc7uI%2fAAAAAAAAE34%2f2ref_vtbT5k%2fs1600%2fPoliteknik%252BUngku%252BOmar.png&ehk=IjCxLkjx3O7Lb2LSgWsvprPJ5Dvm%2fAHQVB35yucEm6Q%3d&risl=&pid=ImgRaw&r=0"
 
-# 2. SISTEM LOGIN
-USER_FILE = "users.json"
+# 2. SISTEM LOGIN (HANYA 3 USER, PASSWORD SAMA)
 def load_users():
-    if os.path.exists(USER_FILE):
-        try:
-            with open(USER_FILE, "r") as f: return json.load(f)
-        except: return {"adam": "123456"}
-    return {"adam": "123456"}
+    # --- 3 USER SAHAJA DI SINI ---
+    senarai_id = ["adam", "user1", "user2"]
+    
+    # --- PASSWORD YANG SAMA UNTUK SEMUA ---
+    PASSWORD_SERAGAM = "123456" 
+    
+    return {user: PASSWORD_SERAGAM for user in senarai_id}
 
-if "user_db" not in st.session_state: st.session_state["user_db"] = load_users()
-if "logged_in" not in st.session_state: st.session_state["logged_in"] = False
-if "current_user" not in st.session_state: st.session_state["current_user"] = ""
+if "user_db" not in st.session_state: 
+    st.session_state["user_db"] = load_users()
+if "logged_in" not in st.session_state: 
+    st.session_state["logged_in"] = False
+if "current_user" not in st.session_state: 
+    st.session_state["current_user"] = ""
 
 def auth_interface():
     _, col2, _ = st.columns([1, 1.8, 1])
@@ -40,9 +44,12 @@ def auth_interface():
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = u_id
                     st.rerun()
-                else: st.error("ID atau Kata Laluan salah!")
+                else: 
+                    st.error("ID atau Kata Laluan salah!")
 
-if not st.session_state["logged_in"]: auth_interface(); st.stop()
+if not st.session_state["logged_in"]: 
+    auth_interface()
+    st.stop()
 
 # --- FUNGSI GEOMETRI ---
 @st.cache_resource
@@ -63,7 +70,8 @@ def kira_data_garisan(p1, p2):
 # 3. SIDEBAR
 st.sidebar.markdown(f"**Sesi:** `{st.session_state['current_user']}`")
 if st.sidebar.button("🚪 Log Keluar"):
-    st.session_state["logged_in"] = False; st.rerun()
+    st.session_state["logged_in"] = False
+    st.rerun()
 
 st.sidebar.divider()
 st.sidebar.subheader("🎯 Penentukuran (Offset)")
@@ -98,7 +106,7 @@ if uploaded_file:
             p1, p2 = df.iloc[i], df.iloc[(i+1)%len(df)]
             brg, dist, rot = kira_data_garisan(p1, p2)
             
-            # POPUP SETIAP STESEN (Baru)
+            # POPUP SETIAP STESEN
             stn_popup_html = f"""
             <div style="font-family: Arial; width: 160px;">
                 <b style="color:red;">📍 STESEN {int(p1['STN'])}</b><br><hr style="margin:5px 0;">
@@ -145,5 +153,7 @@ if uploaded_file:
 
         st_folium(m, width="100%", height=600, returned_objects=[])
         st.metric("Luas (m²)", f"{area_m2:.3f}")
-    else: st.error("EPSG Error")
-else: st.info("Sila muat naik CSV.")
+    else: 
+        st.error("EPSG Error")
+else: 
+    st.info("Sila muat naik CSV.")
